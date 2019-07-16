@@ -1,114 +1,103 @@
 package main
 
 import (
-	"io/ioutil"
-	"os/exec"
-	"plugin"
-	"sort"
+	"fmt"
+	"math/rand"
 	"sync/atomic"
+	"time"
 
-	"github.com/erikdubbelboer/plugintest/data"
+	"github.com/erikdubbelboer/go-plugintest/data"
 )
 
-var (
-	Perf *[3]int64
-)
+var fast atomic.Value
 
 //go:noinline
 func slowHandler(d data.Data) bool {
-	if d.Check(200, 300) {
+	if d.Check(10, 11) {
 		return false
 	}
 
-	if d.Check(100, 200) {
+	if d.Check(5, 8) {
 		return false
 	}
 
-	if d.Check(0, 100) {
+	if d.Check(150, 360) {
+		return false
+	}
+
+	if d.Check(10, 20) {
+		return false
+	}
+
+	if d.Check(60, 150) {
+		return false
+	}
+
+	if d.Check(2, 6) {
+		return false
+	}
+
+	if d.Check(100, 2000) {
+		return false
+	}
+
+	if d.Check(0, 4) {
 		return false
 	}
 
 	return true
 }
 
-func getFastHandler() func(d data.Data) bool {
-	if Perf == nil {
-		p := [3]int64{}
-		Perf = &p
-	}
+func BenchmarkSlow(dur time.Duration) float64 {
+	rand.Seed(0)
 
-	conditions := []string{
-		`
-			if d.Check(200, 300) {
-				atomic.AddInt64(&Perf[0], 1)
-				return false
-			}
-		`,
-		`
-			if d.Check(100, 200) {
-				atomic.AddInt64(&Perf[1], 1)
-				return false
-			}
-		`,
-		`
-			if d.Check(0, 100) {
-				atomic.AddInt64(&Perf[2], 1)
-				return false
-			}
-		`,
-	}
-
-	indices := []int{0, 1, 2}
-
-	sort.Slice(indices, func(i, j int) bool {
-		return atomic.LoadInt64(&Perf[indices[i]]) > atomic.LoadInt64(&Perf[indices[j]])
-	})
-
-	fast := `
-		// +build ignore
-
-		package main
-
-		import (
-			"sync/atomic"
-
-			"github.com/erikdubbelboer/plugintest/data"
-		)
-
-		var Perf [3]int64
-
-		func Handle(d data.Data) bool {
-	`
-	for _, i := range indices {
-		fast += conditions[i]
-	}
-	fast += `
-			return true
+	start := time.Now()
+	ops := float64(0)
+	for {
+		since := time.Since(start)
+		if since > dur {
+			break
 		}
-	`
+		d := data.Data{A: rand.NormFloat64() * float64(since/(dur/1000))}
+		slowHandler(d)
+		ops++
+	}
+	return ops
+}
 
-	if err := ioutil.WriteFile("fast.go", []byte(fast), 0644); err != nil {
-		panic(err)
-	}
+func BenchmarkFast(dur time.Duration) float64 {
+	rand.Seed(0)
 
-	cmd := exec.Command("go", "build", "-buildmode=plugin", "-o", "fast.so", "fast.go")
-	if err := cmd.Run(); err != nil {
-		panic(err)
+	start := time.Now()
+	ops := float64(0)
+	for {
+		since := time.Since(start)
+		if since > dur {
+			break
+		}
+		d := data.Data{A: rand.NormFloat64() * float64(since/(dur/1000))}
+		ff := fast.Load().(func(d data.Data) bool)
+		ff(d)
+		ops++
 	}
+	return ops
+}
 
-	p, err := plugin.Open("fast.so")
-	if err != nil {
-		panic(err)
-	}
-	h, err := p.Lookup("Handle")
-	if err != nil {
-		panic(err)
-	}
-	pf, err := p.Lookup("Perf")
-	if err != nil {
-		panic(err)
-	}
-	Perf = pf.(*[3]int64)
+func main() {
+	dur := time.Second * 10
 
-	return h.(func(d data.Data) bool)
+	ops := BenchmarkSlow(dur)
+	fmt.Println(int(dur/time.Duration(ops)), "ns/op")
+
+	fast.Store(getFastHandler())
+
+	go func() {
+		for {
+			time.Sleep(time.Second)
+			fast.Store(getFastHandler())
+		}
+	}()
+
+	ops = BenchmarkFast(dur)
+	fmt.Println(int(dur/time.Duration(ops)), "ns/op")
 }

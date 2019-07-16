@@ -1,15 +1,17 @@
 package data
 
+import (
+	"time"
+)
+
 type Data struct {
-	A int
+	A float64
 }
 
-var Sink int
+var Sink float64
 
 //go:noinline
-func (d Data) Check(a, b int) bool {
-	for i := 0; i < 10000; i++ {
-		Sink += d.A
-	}
+func (d Data) Check(a, b float64) bool {
+	time.Sleep(time.Microsecond)
 	return d.A > a && d.A < b
 }
